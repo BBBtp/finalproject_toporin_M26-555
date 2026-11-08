@@ -1,0 +1,1 @@
+"""External currency rate ingestion."""
