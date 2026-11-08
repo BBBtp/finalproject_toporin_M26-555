@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+import requests
 
 from valutatrade_hub.core.exceptions import ApiRequestError, RateUnavailableError
 from valutatrade_hub.core.usecases import RateService
@@ -31,6 +32,8 @@ def test_stale_and_missing_rate_fail():
         RateService(storage).rate("BTC", "USD")
     with pytest.raises(RateUnavailableError, match="Нет курса"):
         RateService(storage).rate("ETH", "USD")
+    with pytest.raises(RateUnavailableError, match="устарел"):
+        RateService(storage).rate("BTC", "BTC")
 
 
 def test_coingecko_response(monkeypatch):
@@ -52,6 +55,28 @@ def test_exchangerate_response_is_inverted(monkeypatch):
     assert rates["EUR"] == Decimal("1.25")
     assert rates["GBP"] == Decimal("2")
     assert rates["RUB"] == Decimal("0.01")
+
+
+def test_exchangerate_http_error_hides_api_key(monkeypatch):
+    key = "private-test-key"
+    monkeypatch.setenv("EXCHANGERATE_API_KEY", key)
+    SettingsLoader().reload()
+
+    def fail_request(*args, **kwargs):
+        raise requests.HTTPError(f"HTTP error at {args[0]}")
+
+    monkeypatch.setattr("requests.get", fail_request)
+    with pytest.raises(ApiRequestError) as error:
+        ExchangeRateApiClient().fetch_rates()
+    assert key not in str(error.value)
+
+
+def test_malformed_fiat_payload_is_provider_error(monkeypatch):
+    monkeypatch.setenv("EXCHANGERATE_API_KEY", "test-key")
+    SettingsLoader().reload()
+    monkeypatch.setattr("requests.get", lambda *args, **kwargs: Mock(json=lambda: [], raise_for_status=lambda: None))
+    with pytest.raises(ApiRequestError, match="неверные данные"):
+        ExchangeRateApiClient().fetch_rates()
 
 
 def test_partial_provider_failure_keeps_successful_rates():

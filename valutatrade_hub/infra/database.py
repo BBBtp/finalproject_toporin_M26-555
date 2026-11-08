@@ -28,6 +28,17 @@ class DatabaseManager:
             raise StorageError(f"Неизвестное хранилище: {name}.")
         return self.data_dir / f"{name}.json"
 
+    def ensure_files(self) -> None:
+        """Create empty local stores on first run without overwriting data."""
+        for name, default in (
+            ("users", []),
+            ("portfolios", {}),
+            ("rates", {"pairs": {}, "last_refresh": None}),
+            ("exchange_rates", []),
+        ):
+            if not self._path(name).exists():
+                self.write(name, default)
+
     def read(self, name: str, default: Any) -> Any:
         path = self._path(name)
         if not path.exists():

@@ -14,9 +14,9 @@ from valutatrade_hub.infra.settings import SettingsLoader
 from valutatrade_hub.parser_service.storage import RatesStorage
 
 from .currencies import get_currency
-from .exceptions import AuthenticationError, RateUnavailableError, ValidationError
+from .exceptions import AuthenticationError, RateUnavailableError, StorageError, ValidationError
 from .models import Portfolio, User
-from .utils import parse_amount
+from .utils import MAX_RATE, MIN_RATE, parse_amount
 
 
 class RateService:
@@ -41,7 +41,7 @@ class RateService:
         age = (datetime.now(UTC) - updated).total_seconds()
         if age > self.settings.ttl_seconds or age < -60:
             raise RateUnavailableError(f"Курс {code}/USD устарел. Выполните update-rates.")
-        if not rate.is_finite() or rate <= 0:
+        if not rate.is_finite() or rate < MIN_RATE or rate > MAX_RATE:
             raise RateUnavailableError(f"Курс {code}/USD повреждён. Выполните update-rates.")
         return rate
 
@@ -49,6 +49,7 @@ class RateService:
         source = get_currency(from_code).code
         target = get_currency(to_code).code
         if source == target:
+            self._usd_price(source)
             return Decimal("1")
         return self._usd_price(source) / self._usd_price(target)
 
@@ -74,13 +75,19 @@ class TradingService:
         salt = secrets.token_hex(16)
         user = User(str(uuid.uuid4()), username, self._password_hash(password, salt), salt)
         portfolios = self.database.read("portfolios", {})
-        users.append(user.to_dict())
         portfolios[user.id] = Portfolio(user.id).to_dict()
-        self.database.write("users", users)
         self.database.write("portfolios", portfolios)
+        try:
+            users.append(user.to_dict())
+            self.database.write("users", users)
+        except StorageError:
+            portfolios.pop(user.id)
+            self.database.write("portfolios", portfolios)
+            raise
         return user
 
     def login(self, username: str, password: str) -> User:
+        self.current_user = None
         users = self.database.read("users", [])
         for item in users:
             if item["username"].casefold() == username.casefold():

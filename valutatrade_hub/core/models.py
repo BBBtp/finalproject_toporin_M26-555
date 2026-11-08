@@ -1,11 +1,11 @@
 """Users, wallets and portfolios."""
 
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, localcontext
 
 from .currencies import get_currency
 from .exceptions import InsufficientFundsError, ValidationError
-from .utils import format_amount, parse_amount
+from .utils import MAX_BALANCE, format_amount, positive_change
 
 
 @dataclass
@@ -27,20 +27,30 @@ class Wallet:
     def __post_init__(self) -> None:
         self.currency_code = get_currency(self.currency_code).code
         self.balance = Decimal(str(self.balance))
-        if not self.balance.is_finite() or self.balance < 0:
-            raise ValidationError("Баланс кошелька не может быть отрицательным или бесконечным.")
+        if not self.balance.is_finite() or self.balance < 0 or self.balance > MAX_BALANCE:
+            raise ValidationError("Баланс кошелька вне допустимого диапазона.")
 
     def deposit(self, amount: object) -> None:
-        self.balance += parse_amount(amount)
+        value = positive_change(amount)
+        with localcontext() as context:
+            context.prec = 80
+            new_balance = self.balance + value
+        if new_balance > MAX_BALANCE:
+            raise ValidationError("Баланс кошелька превысит допустимый предел.")
+        if new_balance <= self.balance:
+            raise ValidationError("Сумма слишком мала для изменения баланса.")
+        self.balance = new_balance
 
     def withdraw(self, amount: object) -> None:
-        value = parse_amount(amount)
+        value = positive_change(amount)
         if self.balance < value:
             raise InsufficientFundsError(
                 f"Недостаточно средств: доступно {format_amount(self.balance)} {self.currency_code}, "
                 f"нужно {format_amount(value)} {self.currency_code}."
             )
-        self.balance -= value
+        with localcontext() as context:
+            context.prec = 80
+            self.balance -= value
 
     def to_dict(self) -> dict[str, str]:
         return {"currency_code": self.currency_code, "balance": str(self.balance)}

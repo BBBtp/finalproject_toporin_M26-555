@@ -148,6 +148,9 @@ def run_repl(cli: CLI | None = None) -> None:
             print(cli.execute(tokens))
         except (ValutaTradeError, ValueError) as exc:
             print(f"Ошибка: {exc}")
+        except SystemExit as exc:
+            if exc.code != 0:
+                print("Ошибка: не удалось показать справку.")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 import requests
 
 from valutatrade_hub.core.exceptions import ApiRequestError
+from valutatrade_hub.core.utils import MAX_RATE, MIN_RATE
 from valutatrade_hub.infra.settings import SettingsLoader
 
 from .config import COINGECKO_URL, CRYPTO_IDS, EXCHANGE_RATE_URL, FIAT_CODES
@@ -16,7 +17,7 @@ def _positive_rate(value: object, code: str) -> Decimal:
         rate = Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError) as exc:
         raise ApiRequestError(f"Некорректный курс {code} в ответе API.") from exc
-    if not rate.is_finite() or rate <= 0:
+    if not rate.is_finite() or rate < MIN_RATE or rate > MAX_RATE:
         raise ApiRequestError(f"Некорректный курс {code} в ответе API.")
     return rate
 
@@ -42,8 +43,10 @@ class CoinGeckoClient(BaseApiClient):
             response.raise_for_status()
             payload = response.json()
             return {code: _positive_rate(payload[coin_id]["usd"], code) for code, coin_id in CRYPTO_IDS.items()}
-        except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
-            raise ApiRequestError(f"CoinGecko недоступен или вернул неверные данные: {exc}") from exc
+        except requests.RequestException:
+            raise ApiRequestError("CoinGecko: ошибка сети или HTTP. Повторите обновление позже.") from None
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise ApiRequestError("CoinGecko вернул неверные данные.") from exc
 
 
 class ExchangeRateApiClient(BaseApiClient):
@@ -57,9 +60,19 @@ class ExchangeRateApiClient(BaseApiClient):
             response = requests.get(EXCHANGE_RATE_URL.format(key=key), timeout=10)
             response.raise_for_status()
             payload = response.json()
+            if not isinstance(payload, dict):
+                raise ApiRequestError("ExchangeRate-API вернул неверные данные.")
             if payload.get("result") != "success" or payload.get("base_code") != "USD":
-                raise ApiRequestError(f"ExchangeRate-API: {payload.get('error-type', 'неверный ответ')}.")
+                reason = payload.get("error-type", "неверный ответ")
+                allowed = {"unsupported-code", "malformed-request", "invalid-key", "inactive-account", "quota-reached"}
+                if reason not in allowed:
+                    reason = "неверный ответ"
+                raise ApiRequestError(f"ExchangeRate-API: {reason}.")
             rates = payload["conversion_rates"]
+            if not isinstance(rates, dict):
+                raise ApiRequestError("ExchangeRate-API вернул неверные данные.")
             return {code: Decimal("1") / _positive_rate(rates[code], code) for code in FIAT_CODES}
-        except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
-            raise ApiRequestError(f"ExchangeRate-API недоступен или вернул неверные данные: {exc}") from exc
+        except requests.RequestException:
+            raise ApiRequestError("ExchangeRate-API: ошибка сети или HTTP. Проверьте ключ и лимит запросов.") from None
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise ApiRequestError("ExchangeRate-API вернул неверные данные.") from exc
