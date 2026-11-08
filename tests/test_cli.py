@@ -64,19 +64,49 @@ def test_failed_login_clears_existing_session():
 
 def test_registration_recovers_if_user_write_fails(monkeypatch):
     database = DatabaseManager()
-    original_write = database.write
+    original_write = database._write_path
+    failures = 0
 
-    def fail_user_write(name, payload):
-        if name == "users":
+    def fail_user_write(path, payload):
+        nonlocal failures
+        if path.name == "users.json" and failures == 0:
+            failures += 1
             raise StorageError("simulated write failure")
-        return original_write(name, payload)
+        return original_write(path, payload)
 
-    monkeypatch.setattr(database, "write", fail_user_write)
+    monkeypatch.setattr(database, "_write_path", fail_user_write)
     with pytest.raises(StorageError):
         TradingService(database=database).register("toporin", "secret123")
     assert database.read("users", []) == []
     assert database.read("portfolios", {}) == {}
-    monkeypatch.setattr(database, "write", original_write)
+    monkeypatch.setattr(database, "_write_path", original_write)
+    assert TradingService(database=database).register("toporin", "secret123").username == "toporin"
+
+
+def test_registration_journal_recovers_after_failed_rollback(monkeypatch):
+    database = DatabaseManager()
+    original_write = database._write_path
+    counts = {"users": 0, "portfolios": 0}
+
+    def fail_update_and_first_rollback(path, payload):
+        if path.name == "users.json" and counts["users"] == 0:
+            counts["users"] += 1
+            raise StorageError("user write failed")
+        if path.name == "portfolios.json":
+            counts["portfolios"] += 1
+            if counts["portfolios"] == 2:
+                raise StorageError("rollback failed")
+        return original_write(path, payload)
+
+    monkeypatch.setattr(database, "_write_path", fail_update_and_first_rollback)
+    with pytest.raises(StorageError, match="следующем запуске"):
+        TradingService(database=database).register("toporin", "secret123")
+    journal = database.data_dir / ".registration-journal.json"
+    assert journal.exists()
+    monkeypatch.setattr(database, "_write_path", original_write)
+    assert database.read("users", []) == []
+    assert database.read("portfolios", {}) == {}
+    assert not journal.exists()
     assert TradingService(database=database).register("toporin", "secret123").username == "toporin"
 
 

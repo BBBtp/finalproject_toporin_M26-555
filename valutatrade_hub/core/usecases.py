@@ -14,7 +14,7 @@ from valutatrade_hub.infra.settings import SettingsLoader
 from valutatrade_hub.parser_service.storage import RatesStorage
 
 from .currencies import get_currency
-from .exceptions import AuthenticationError, RateUnavailableError, StorageError, ValidationError
+from .exceptions import AuthenticationError, RateUnavailableError, ValidationError
 from .models import Portfolio, User
 from .utils import MAX_RATE, MIN_RATE, parse_amount
 
@@ -76,14 +76,8 @@ class TradingService:
         user = User(str(uuid.uuid4()), username, self._password_hash(password, salt), salt)
         portfolios = self.database.read("portfolios", {})
         portfolios[user.id] = Portfolio(user.id).to_dict()
-        self.database.write("portfolios", portfolios)
-        try:
-            users.append(user.to_dict())
-            self.database.write("users", users)
-        except StorageError:
-            portfolios.pop(user.id)
-            self.database.write("portfolios", portfolios)
-            raise
+        users.append(user.to_dict())
+        self.database.write_accounts(users, portfolios)
         return user
 
     def login(self, username: str, password: str) -> User:
