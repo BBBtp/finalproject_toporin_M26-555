@@ -174,15 +174,17 @@ class Portfolio:
     def get_total_value(
         self, base_currency: str = "USD", rate_provider: Callable[[str, str], Decimal] | None = None
     ) -> Decimal:
-        """Value the portfolio using supplied rates or a USD-only identity."""
+        """Value all wallets using fresh cached rates or an injected rate source."""
         base = get_currency(base_currency).code
+        if rate_provider is None:
+            from .usecases import RateService
+
+            rate_provider = RateService().rate
         total = Decimal("0")
         for code, wallet in self._wallets.items():
             if wallet.balance == 0:
                 continue
-            if rate_provider is None and code != base:
-                raise ValidationError("Для оценки портфеля нужен источник курсов.")
-            rate = rate_provider(code, base) if rate_provider is not None else Decimal("1")
+            rate = rate_provider(code, base)
             total += wallet.balance * rate
         return total
 

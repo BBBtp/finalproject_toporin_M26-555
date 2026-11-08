@@ -9,6 +9,7 @@ from valutatrade_hub.core.exceptions import InsufficientFundsError, ValidationEr
 from valutatrade_hub.core.models import Portfolio, User, Wallet
 from valutatrade_hub.core.utils import parse_amount
 from valutatrade_hub.infra.database import DatabaseManager
+from valutatrade_hub.parser_service.storage import RatesStorage
 
 
 @pytest.mark.parametrize(
@@ -76,6 +77,14 @@ def test_wallet_and_portfolio_public_interfaces():
     assert portfolio.get_wallet("USD") is wallet
     with pytest.raises(ValidationError):
         wallet.balance = "-1"
+
+
+def test_portfolio_total_uses_cached_rates_by_default():
+    portfolio = Portfolio(1)
+    portfolio.add_currency("USD").deposit(10)
+    portfolio.add_currency("BTC").deposit(3)
+    RatesStorage().save({"BTC_USD": Decimal("2")}, "coingecko")
+    assert portfolio.get_total_value() == Decimal("16")
 
 
 def test_currency_polymorphic_display():
