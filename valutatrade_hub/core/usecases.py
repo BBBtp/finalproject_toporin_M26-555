@@ -1,10 +1,5 @@
 """Rate lookup, authentication and virtual trading use cases."""
 
-import hashlib
-import hmac
-import re
-import secrets
-import uuid
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 
@@ -53,6 +48,17 @@ class RateService:
             return Decimal("1")
         return self._usd_price(source) / self._usd_price(target)
 
+    def quote(self, from_code: str, to_code: str) -> dict[str, Decimal | str]:
+        """Return a fresh cross-rate together with its oldest source timestamp."""
+        rate = self.rate(from_code, to_code)
+        pairs = self.storage.read().get("pairs", {})
+        stamps = [
+            pairs[f"{code}_USD"]["updated_at"]
+            for code in {get_currency(from_code).code, get_currency(to_code).code}
+            if code != "USD"
+        ]
+        return {"rate": rate, "updated_at": min(stamps) if stamps else datetime.now(UTC).isoformat()}
+
 
 class TradingService:
     def __init__(self, database: DatabaseManager | None = None, rates: RateService | None = None) -> None:
@@ -60,22 +66,19 @@ class TradingService:
         self.rates = rates or RateService()
         self.current_user: User | None = None
 
-    @staticmethod
-    def _password_hash(password: str, salt: str) -> str:
-        return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
-
     def register(self, username: str, password: str) -> User:
-        if not re.fullmatch(r"[A-Za-z0-9_]{3,32}", username):
-            raise ValidationError("Имя пользователя: 3–32 латинских буквы, цифры или подчёркивания.")
-        if len(password) < 8:
-            raise ValidationError("Пароль должен содержать не менее 8 символов.")
+        if not isinstance(username, str) or not username.strip():
+            raise ValidationError("Имя пользователя не может быть пустым.")
+        if not isinstance(password, str) or len(password) < 4:
+            raise ValidationError("Пароль должен быть не короче 4 символов.")
+        username = username.strip()
         users = self.database.read("users", [])
         if any(item["username"].casefold() == username.casefold() for item in users):
-            raise ValidationError(f"Пользователь {username!r} уже зарегистрирован.")
-        salt = secrets.token_hex(16)
-        user = User(str(uuid.uuid4()), username, self._password_hash(password, salt), salt)
+            raise ValidationError(f"Имя пользователя {username!r} уже занято.")
+        next_id = max((item["user_id"] for item in users), default=0) + 1
+        user = User(next_id, username, password=password)
         portfolios = self.database.read("portfolios", {})
-        portfolios[user.id] = Portfolio(user.id).to_dict()
+        portfolios[str(user.id)] = Portfolio(user.id).to_dict()
         users.append(user.to_dict())
         self.database.write_accounts(users, portfolios)
         return user
@@ -85,11 +88,12 @@ class TradingService:
         users = self.database.read("users", [])
         for item in users:
             if item["username"].casefold() == username.casefold():
-                candidate = self._password_hash(password, item["salt"])
-                if hmac.compare_digest(candidate, item["password_hash"]):
-                    self.current_user = User(**item)
-                    return self.current_user
-        raise AuthenticationError("Неверное имя пользователя или пароль.")
+                user = User.from_dict(item)
+                if not user.verify_password(password):
+                    raise AuthenticationError("Неверный пароль.")
+                self.current_user = user
+                return user
+        raise AuthenticationError(f"Пользователь {username!r} не найден.")
 
     def logout(self) -> None:
         self.current_user = None
@@ -102,11 +106,11 @@ class TradingService:
     def _portfolio(self) -> Portfolio:
         user = self._require_user()
         portfolios = self.database.read("portfolios", {})
-        return Portfolio.from_dict(portfolios.get(user.id, {"user_id": user.id, "wallets": {}}))
+        return Portfolio.from_dict(portfolios.get(str(user.id), {"user_id": user.id, "wallets": {}}), user=user)
 
     def _save_portfolio(self, portfolio: Portfolio) -> None:
         portfolios = self.database.read("portfolios", {})
-        portfolios[portfolio.user_id] = portfolio.to_dict()
+        portfolios[str(portfolio.user_id)] = portfolio.to_dict()
         self.database.write("portfolios", portfolios)
 
     def deposit(self, amount: object) -> dict[str, Decimal]:
@@ -126,10 +130,18 @@ class TradingService:
         rate = self.rates.rate(code, "USD")
         cost = value * rate
         portfolio = self._portfolio()
+        before = portfolio.wallet(code).balance
         portfolio.wallet("USD").withdraw(cost)
         portfolio.wallet(code).deposit(value)
         self._save_portfolio(portfolio)
-        return {"currency": code, "amount": value, "rate": rate, "usd": cost}
+        return {
+            "currency": code,
+            "amount": value,
+            "rate": rate,
+            "usd": cost,
+            "balance_before": before,
+            "balance_after": portfolio.wallet(code).balance,
+        }
 
     @log_action
     def sell(self, currency: str, amount: object) -> dict[str, Decimal | str]:
@@ -138,13 +150,24 @@ class TradingService:
         if code == "USD":
             raise ValidationError("USD нельзя продать за USD.")
         self._require_user()
+        portfolio = self._portfolio()
+        wallet = portfolio.get_wallet(code)
+        if wallet is None:
+            raise ValidationError(f"У вас нет кошелька {code!r}. Он создаётся при первой покупке.")
         rate = self.rates.rate(code, "USD")
         proceeds = value * rate
-        portfolio = self._portfolio()
-        portfolio.wallet(code).withdraw(value)
+        before = wallet.balance
+        wallet.withdraw(value)
         portfolio.wallet("USD").deposit(proceeds)
         self._save_portfolio(portfolio)
-        return {"currency": code, "amount": value, "rate": rate, "usd": proceeds}
+        return {
+            "currency": code,
+            "amount": value,
+            "rate": rate,
+            "usd": proceeds,
+            "balance_before": before,
+            "balance_after": wallet.balance,
+        }
 
     def portfolio(self, base: str = "USD") -> dict[str, object]:
         base = get_currency(base).code

@@ -8,40 +8,62 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMMANDS = [
-    "register --username demo_user --password example123",
-    "login --username demo_user --password example123",
-    "deposit --amount 100",
-    "get-rate --from EUR --to USD",
-    "buy --currency EUR --amount 20",
+    "register --username demo_user --password 1234",
+    "login --username demo_user --password 1234",
+    "deposit --amount 10000",
+    "update-rates",
+    "show-rates --top 2",
+    "show-rates --currency RUB",
+    "get-rate --from BTC --to USD",
+    "buy --currency BTC --amount 0.05",
     "show-portfolio",
-    "sell --currency EUR --amount 5",
+    "sell --currency BTC --amount 0.01",
     "show-portfolio",
+    "buy --currency BTC --amount 10",
+    "get-rate --from ABC --to USD",
     "exit",
 ]
 
 
+def demo_shell() -> None:
+    """Run the real CLI with deterministic API clients for the recording."""
+    sys.path.insert(0, str(ROOT))
+    from valutatrade_hub.cli.interface import CLI, run_repl
+    from valutatrade_hub.logging_config import configure_logging
+    from valutatrade_hub.parser_service.updater import RatesUpdater
+
+    class FixtureClient:
+        def __init__(self, name: str, rates: dict[str, Decimal]) -> None:
+            self.name = name
+            self.rates = rates
+
+        def fetch_rates(self) -> dict[str, Decimal]:
+            return self.rates
+
+    clients = [
+        FixtureClient(
+            "coingecko", {"BTC_USD": Decimal("59337.21"), "ETH_USD": Decimal("3720"), "SOL_USD": Decimal("145.12")}
+        ),
+        FixtureClient(
+            "exchangerate", {"EUR_USD": Decimal("1.0786"), "GBP_USD": Decimal("1.25"), "RUB_USD": Decimal("0.01016")}
+        ),
+    ]
+    configure_logging()
+    run_repl(CLI(updater=RatesUpdater(clients=clients)))
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
-        stamp = datetime.now(UTC).isoformat()
-        Path(temp_dir, "rates.json").write_text(
-            json.dumps(
-                {
-                    "pairs": {"EUR_USD": {"rate": "1.25", "updated_at": stamp, "source": "fixture"}},
-                    "last_refresh": stamp,
-                }
-            ),
-            encoding="utf-8",
-        )
         master, slave = pty.openpty()
         environment = os.environ.copy()
         environment["VALUTATRADE_DATA_DIR"] = temp_dir
         process = subprocess.Popen(
-            [sys.executable, "-u", str(ROOT / "main.py")],
+            [sys.executable, "-u", str(Path(__file__).resolve()), "--demo-shell"],
             stdin=slave,
             stdout=slave,
             stderr=slave,
@@ -96,4 +118,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--demo-shell"]:
+        demo_shell()
+    else:
+        main()

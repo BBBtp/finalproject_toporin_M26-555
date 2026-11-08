@@ -1,6 +1,7 @@
 """User-visible trading scenarios."""
 
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +10,7 @@ from valutatrade_hub.core.exceptions import AuthenticationError, InsufficientFun
 from valutatrade_hub.core.usecases import TradingService
 from valutatrade_hub.infra.database import DatabaseManager
 from valutatrade_hub.parser_service.storage import RatesStorage
+from valutatrade_hub.parser_service.updater import RatesUpdater
 
 
 def _logged_in_service():
@@ -20,7 +22,7 @@ def _logged_in_service():
 
 def test_deposit_buy_sell_and_portfolio():
     service = _logged_in_service()
-    RatesStorage().save({"EUR": Decimal("1.25")}, "fixture")
+    RatesStorage().save({"EUR_USD": Decimal("1.25")}, "fixture")
     service.deposit("100")
     service.buy("EUR", "20")
     portfolio = service.portfolio()
@@ -33,12 +35,12 @@ def test_deposit_buy_sell_and_portfolio():
 
 def test_insufficient_balance_leaves_portfolio_intact():
     service = _logged_in_service()
-    RatesStorage().save({"EUR": Decimal("1.25")}, "fixture")
+    RatesStorage().save({"EUR_USD": Decimal("1.25")}, "fixture")
     service.deposit("10")
     with pytest.raises(InsufficientFundsError):
         service.buy("EUR", "20")
     assert service.portfolio()["wallets"]["USD"]["balance"] == Decimal("10")
-    with pytest.raises(InsufficientFundsError):
+    with pytest.raises(ValidationError, match="нет кошелька"):
         service.sell("EUR", "1")
     assert service.portfolio()["wallets"]["USD"]["balance"] == Decimal("10")
 
@@ -46,7 +48,7 @@ def test_insufficient_balance_leaves_portfolio_intact():
 def test_authentication_and_duplicate_name():
     service = TradingService()
     service.register("toporin", "secret123")
-    with pytest.raises(ValidationError, match="уже зарегистрирован"):
+    with pytest.raises(ValidationError, match="уже занято"):
         service.register("TOPORIN", "secret123")
     with pytest.raises(AuthenticationError):
         service.login("toporin", "wrong123")
@@ -126,3 +128,22 @@ def test_subcommand_help_keeps_interactive_session_open(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "--currency" in output
     assert "До свидания." in output
+
+
+def test_cli_rate_commands_show_timestamp_and_crypto_top():
+    RatesStorage().save({"BTC_USD": Decimal("60000"), "EUR_USD": Decimal("1.25")}, "fixture")
+    cli = CLI()
+    quote = cli.execute(["get-rate", "--from", "BTC", "--to", "USD"])
+    assert "обновлено:" in quote
+    assert "Обратный курс USD→BTC" in quote
+    top = cli.execute(["show-rates", "--top", "2"])
+    assert "BTC/USD" in top
+    assert "EUR/USD" not in top
+    assert "не найден в кеше" in cli.execute(["show-rates", "--currency", "ABC"])
+
+
+def test_get_rate_refreshes_missing_cache_from_matching_provider():
+    provider = SimpleNamespace(name="coingecko", fetch_rates=lambda: {"BTC_USD": Decimal("60000")})
+    cli = CLI(updater=RatesUpdater(clients=[provider]))
+    assert "Курс BTC→USD: 60000" in cli.execute(["get-rate", "--from", "BTC", "--to", "USD"])
+    assert "BTC_USD" in RatesStorage().read()["pairs"]

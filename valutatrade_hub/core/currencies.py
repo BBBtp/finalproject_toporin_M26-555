@@ -1,6 +1,6 @@
 """Supported fiat and crypto currencies."""
 
-from abc import ABC
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from .exceptions import CurrencyNotFoundError, ValidationError
@@ -17,25 +17,36 @@ class Currency(ABC):
         if not self.name.strip():
             raise ValidationError("Название валюты не может быть пустым.")
 
+    @abstractmethod
+    def get_display_info(self) -> str:
+        """Describe the currency for a user-facing table or log."""
+
 
 @dataclass(frozen=True)
 class FiatCurrency(Currency):
-    pass
+    issuing_country: str
+
+    def get_display_info(self) -> str:
+        return f"[FIAT] {self.code} — {self.name} (Issuing: {self.issuing_country})"
 
 
 @dataclass(frozen=True)
 class CryptoCurrency(Currency):
-    pass
+    algorithm: str
+    market_cap: float
+
+    def get_display_info(self) -> str:
+        return f"[CRYPTO] {self.code} — {self.name} (Algo: {self.algorithm}, MCAP: {self.market_cap:.2e})"
 
 
 REGISTRY: dict[str, Currency] = {
-    "USD": FiatCurrency("USD", "US Dollar"),
-    "EUR": FiatCurrency("EUR", "Euro"),
-    "GBP": FiatCurrency("GBP", "British Pound"),
-    "RUB": FiatCurrency("RUB", "Russian Ruble"),
-    "BTC": CryptoCurrency("BTC", "Bitcoin"),
-    "ETH": CryptoCurrency("ETH", "Ethereum"),
-    "SOL": CryptoCurrency("SOL", "Solana"),
+    "USD": FiatCurrency("USD", "US Dollar", "United States"),
+    "EUR": FiatCurrency("EUR", "Euro", "Eurozone"),
+    "GBP": FiatCurrency("GBP", "British Pound", "United Kingdom"),
+    "RUB": FiatCurrency("RUB", "Russian Ruble", "Russia"),
+    "BTC": CryptoCurrency("BTC", "Bitcoin", "SHA-256", 0.0),
+    "ETH": CryptoCurrency("ETH", "Ethereum", "Proof of Stake", 0.0),
+    "SOL": CryptoCurrency("SOL", "Solana", "Proof of History", 0.0),
 }
 
 
@@ -45,4 +56,4 @@ def get_currency(code: str) -> Currency:
     try:
         return REGISTRY[normalized]
     except KeyError as exc:
-        raise CurrencyNotFoundError(f"Валюта {normalized!r} не поддерживается.") from exc
+        raise CurrencyNotFoundError(f"Неизвестная валюта {normalized!r}.") from exc

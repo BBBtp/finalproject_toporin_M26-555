@@ -28,6 +28,9 @@ class RateUnavailableError(ValutaTradeError):
 class ApiRequestError(ValutaTradeError):
     """An upstream rate provider failed."""
 
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"Ошибка при обращении к внешнему API: {reason}")
+
 
 class StorageError(ValutaTradeError):
     """Persistent data could not be read or written."""

@@ -16,7 +16,7 @@ def configure_logging() -> None:
     if logger.handlers:
         return
     logger.setLevel(settings.log_level.upper())
-    handler = RotatingFileHandler(settings.data_dir / "app.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+    handler = RotatingFileHandler(settings.log_file, maxBytes=1_000_000, backupCount=3, encoding="utf-8")
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%dT%H:%M:%SZ")
     formatter.converter = time.gmtime
     handler.setFormatter(formatter)

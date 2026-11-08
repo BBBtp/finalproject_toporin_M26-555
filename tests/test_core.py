@@ -4,8 +4,9 @@ from decimal import Decimal
 
 import pytest
 
+from valutatrade_hub.core.currencies import get_currency
 from valutatrade_hub.core.exceptions import InsufficientFundsError, ValidationError
-from valutatrade_hub.core.models import Wallet
+from valutatrade_hub.core.models import Portfolio, User, Wallet
 from valutatrade_hub.core.utils import parse_amount
 from valutatrade_hub.infra.database import DatabaseManager
 
@@ -49,3 +50,34 @@ def test_initialization_creates_empty_stores_without_overwriting_existing_data()
     assert database.read("portfolios", None) == {}
     assert database.read("rates", None) == {"pairs": {}, "last_refresh": None}
     assert database.read("exchange_rates", None) == []
+
+
+def test_user_matches_assignment_schema_and_can_change_password():
+    user = User(1, "alice", password="1234")
+    stored = user.to_dict()
+    assert set(stored) == {"user_id", "username", "hashed_password", "salt", "registration_date"}
+    assert user.get_user_info() == {key: stored[key] for key in ("user_id", "username", "registration_date")}
+    assert user.verify_password("1234")
+    user.change_password("5678")
+    assert not user.verify_password("1234")
+    assert User.from_dict(user.to_dict()).verify_password("5678")
+
+
+def test_wallet_and_portfolio_public_interfaces():
+    user = User(1, "alice", password="1234")
+    portfolio = Portfolio(user.user_id, user=user)
+    wallet = portfolio.add_currency("USD")
+    wallet.deposit(10)
+    assert portfolio.user is user
+    assert portfolio.get_wallet("USD") is wallet
+    assert portfolio.get_total_value() == Decimal("10")
+    assert wallet.get_balance_info() == "USD: 10"
+    portfolio.wallets.clear()
+    assert portfolio.get_wallet("USD") is wallet
+    with pytest.raises(ValidationError):
+        wallet.balance = "-1"
+
+
+def test_currency_polymorphic_display():
+    assert get_currency("USD").get_display_info() == "[FIAT] USD — US Dollar (Issuing: United States)"
+    assert "[CRYPTO] BTC — Bitcoin (Algo: SHA-256, MCAP:" in get_currency("BTC").get_display_info()

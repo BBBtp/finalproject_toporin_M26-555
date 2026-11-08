@@ -7,9 +7,8 @@ import requests
 
 from valutatrade_hub.core.exceptions import ApiRequestError
 from valutatrade_hub.core.utils import MAX_RATE, MIN_RATE
-from valutatrade_hub.infra.settings import SettingsLoader
 
-from .config import COINGECKO_URL, CRYPTO_IDS, EXCHANGE_RATE_URL, FIAT_CODES
+from .config import ParserConfig
 
 
 def _positive_rate(value: object, code: str) -> Decimal:
@@ -33,17 +32,25 @@ class BaseApiClient(ABC):
 class CoinGeckoClient(BaseApiClient):
     name = "coingecko"
 
+    def __init__(self, config: ParserConfig | None = None) -> None:
+        self.config = config or ParserConfig()
+
     def fetch_rates(self) -> dict[str, Decimal]:
         try:
             response = requests.get(
-                COINGECKO_URL,
-                params={"ids": ",".join(CRYPTO_IDS.values()), "vs_currencies": "usd"},
-                timeout=10,
+                self.config.coingecko_url,
+                params={"ids": ",".join(self.config.crypto_id_map.values()), "vs_currencies": "usd"},
+                timeout=self.config.request_timeout,
             )
             response.raise_for_status()
             payload = response.json()
-            return {code: _positive_rate(payload[coin_id]["usd"], code) for code, coin_id in CRYPTO_IDS.items()}
-        except requests.RequestException:
+            return {
+                f"{code}_USD": _positive_rate(payload[coin_id]["usd"], code)
+                for code, coin_id in self.config.crypto_id_map.items()
+            }
+        except requests.RequestException as exc:
+            if getattr(exc.response, "status_code", None) == 429:
+                raise ApiRequestError("CoinGecko: превышен лимит запросов (429). Повторите позже.") from None
             raise ApiRequestError("CoinGecko: ошибка сети или HTTP. Повторите обновление позже.") from None
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             raise ApiRequestError("CoinGecko вернул неверные данные.") from exc
@@ -52,12 +59,15 @@ class CoinGeckoClient(BaseApiClient):
 class ExchangeRateApiClient(BaseApiClient):
     name = "exchangerate"
 
+    def __init__(self, config: ParserConfig | None = None) -> None:
+        self.config = config or ParserConfig()
+
     def fetch_rates(self) -> dict[str, Decimal]:
-        key = SettingsLoader().api_key
+        key = self.config.api_key
         if not key:
             raise ApiRequestError("Для фиатных курсов задайте EXCHANGERATE_API_KEY.")
         try:
-            response = requests.get(EXCHANGE_RATE_URL.format(key=key), timeout=10)
+            response = requests.get(self.config.exchangerate_url.format(key=key), timeout=self.config.request_timeout)
             response.raise_for_status()
             payload = response.json()
             if not isinstance(payload, dict):
@@ -68,11 +78,17 @@ class ExchangeRateApiClient(BaseApiClient):
                 if reason not in allowed:
                     reason = "неверный ответ"
                 raise ApiRequestError(f"ExchangeRate-API: {reason}.")
-            rates = payload["conversion_rates"]
+            rates = payload.get("conversion_rates", payload.get("rates"))
             if not isinstance(rates, dict):
                 raise ApiRequestError("ExchangeRate-API вернул неверные данные.")
-            return {code: Decimal("1") / _positive_rate(rates[code], code) for code in FIAT_CODES}
-        except requests.RequestException:
+            return {
+                f"{code}_USD": Decimal("1") / _positive_rate(rates[code], code) for code in self.config.fiat_currencies
+            }
+        except requests.RequestException as exc:
+            if getattr(exc.response, "status_code", None) == 401:
+                raise ApiRequestError("ExchangeRate-API: неверный ключ (401).") from None
+            if getattr(exc.response, "status_code", None) == 429:
+                raise ApiRequestError("ExchangeRate-API: превышен лимит запросов (429).") from None
             raise ApiRequestError("ExchangeRate-API: ошибка сети или HTTP. Проверьте ключ и лимит запросов.") from None
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             raise ApiRequestError("ExchangeRate-API вернул неверные данные.") from exc
