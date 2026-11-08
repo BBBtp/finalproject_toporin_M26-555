@@ -1,0 +1,27 @@
+[project]
+name = "valutatrade-hub"
+version = "1.0.0"
+description = "Educational virtual currency trading CLI"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "prettytable>=3.12,<4",
+  "requests>=2.32,<3",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3,<9",
+  "ruff>=0.9,<1",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
