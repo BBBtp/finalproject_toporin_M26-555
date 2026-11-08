@@ -48,14 +48,7 @@ valutatrade> exit
 
 ## Источники курсов
 
-Криптовалюты обновляются через [CoinGecko Simple Price](https://docs.coingecko.com/reference/simple-price) без ключа. По заданию для EUR, GBP и RUB нужно зарегистрироваться и получить ключ [ExchangeRate-API](https://www.exchangerate-api.com/docs/standard-requests). Ключ задаётся в окружении и не сохраняется в Git:
-
-```bash
-export EXCHANGERATE_API_KEY='ваш-ключ'
-python3 -m uv run valutatrade
-```
-
-API отдаёт количество валюты за 1 USD; приложение инвертирует это значение и хранит USD за 1 единицу валюты. Ключ не записывается в репозиторий. Если один источник недоступен, обновление другого сохраняется и выводится предупреждение. Обновление также можно запустить по расписанию через `valutatrade_hub.parser_service.scheduler.run_forever()`.
+Криптовалюты обновляются через [CoinGecko Simple Price](https://docs.coingecko.com/reference/simple-price), фиатные EUR, GBP и RUB — через [ExchangeRate-API](https://www.exchangerate-api.com/docs/standard-requests). Если один источник недоступен, обновление другого сохраняется и выводится предупреждение. Обновление также можно запустить по расписанию через `valutatrade_hub.parser_service.scheduler.run_forever()`.
 
 Курсы записываются в `data/rates.json`, история — в `data/exchange_rates.json`. По умолчанию срок действия курса 300 секунд, его можно изменить переменной `VALUTATRADE_RATE_TTL`. Если курс отсутствует или устарел, `buy`, `sell` и оценка портфеля предлагают выполнить `update-rates`; `get-rate` сначала пытается обновить курс через нужный источник. `show-rates` отображает сохранённый снимок даже после истечения срока. Ответ ExchangeRate-API содержит количество EUR/GBP/RUB за 1 USD, поэтому для хранения курса «валюта → USD» оно инвертируется.
 
@@ -79,4 +72,4 @@ python3 -m uv run ruff check .
 python3 -m uv build
 ```
 
-[Локальная запись демонстрации](demo.cast) показывает регистрацию, вход, `update-rates`, `show-rates`, `get-rate`, покупку, продажу, портфель и ошибки. Запись использует тестовые клиенты вместо сетевых запросов и воспроизводится командой `asciinema play demo.cast`. Публичный адрес записи не создан.
+[Посмотреть скринкаст на asciinema](https://asciinema.org/a/gS2WmCKJfnQg7yTm) — регистрация, вход, `update-rates`, `show-rates`, `get-rate`, покупка, продажа, портфель и обработка ошибок. Запись использует тестовые клиенты вместо сетевых запросов. [Файл записи](demo.cast) можно воспроизвести локально командой `asciinema play demo.cast`.
