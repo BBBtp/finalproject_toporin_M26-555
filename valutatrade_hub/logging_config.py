@@ -1,6 +1,7 @@
 """Rotating application log configuration."""
 
 import logging
+import time
 from logging.handlers import RotatingFileHandler
 
 from .infra.database import DatabaseManager
@@ -16,5 +17,7 @@ def configure_logging() -> None:
         return
     logger.setLevel(settings.log_level.upper())
     handler = RotatingFileHandler(settings.data_dir / "app.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%dT%H:%M:%SZ")
+    formatter.converter = time.gmtime
+    handler.setFormatter(formatter)
     logger.addHandler(handler)
